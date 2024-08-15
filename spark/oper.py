@@ -31,25 +31,65 @@ df_transformado = df_transformado.withColumn("verificado_G_restantes",
 
 
 #Diversas operações
-from pyspark.sql.functions import when, lit
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lit, datediff
+from datetime import datetime, timedelta
 
-# Calcular K_hoje
-df_transformado = df_transformado.withColumn("K_hoje", 
-                                             col("K_ontem") + when(col("J_ontem").isNull(), 
-                                             col("data_hoje") - col("I_ontem"))
-                                             .otherwise(col("data_hoje") - col("J_ontem")))
+# Inicialização da sessão Spark com Delta Lake configurado
+spark = SparkSession.builder \
+    .appName("GlueJobDeltaLakeTransformations") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
 
-# Calcular N_hoje
-df_transformado = df_transformado.withColumn("N_hoje", (col("K_hoje") - col("K_ontem")) * col("H_ontem"))
+# Parâmetros recebidos do gatilho
+data_hoje = "2024-08-14"
+data_ontem = (datetime.strptime(data_hoje, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
 
-# Calcular L_hoje
-df_transformado = df_transformado.withColumn("L_hoje", col("L_ontem") + col("N_hoje"))
+# Caminho no S3 da tabela Delta Lake
+delta_table_path = "s3://your-bucket/your-delta-table/"
 
-# Calcular M_hoje
-df_transformado = df_transformado.withColumn("M_hoje", col("D_ontem") - col("L_hoje"))
+# Ler os dados da tabela Delta Lake
+df = spark.read.format("delta").load(delta_table_path)
 
-# Fazer o append da linha "hoje"
-df_hoje = df_transformado.withColumn("data", lit(data_hoje))  # Definir a data de hoje
+# Filtrar os dados de ontem
+df_ontem = df.filter(col("data") == data_ontem).alias("ontem")
+
+# Filtrar os dados de hoje (inicialmente vazio, será preenchido com as novas linhas)
+df_hoje = df_ontem.select(
+    col("nome").alias("nome"),
+    col("data").alias("data"),
+    col("k").alias("k_ontem"),
+    col("I").alias("I_ontem"),
+    col("J").alias("J_ontem"),
+    col("L").alias("L_ontem"),
+    col("D").alias("D_ontem"),
+    col("H").alias("H_ontem")
+)
+
+# Transformações para calcular os valores de hoje baseados nos dados de ontem
+df_hoje_transformado = df_hoje.withColumn(
+    "K",
+    col("k_ontem") + when(col("J_ontem").isNull(), datediff(lit(data_hoje), col("I_ontem"))).otherwise(datediff(lit(data_hoje), col("data_J_ontem")))
+).withColumn(
+    "N",
+    (col("K") - col("k_ontem")) * col("H_ontem")
+).withColumn(
+    "L",
+    col("L_ontem") + col("N")
+).withColumn(
+    "M",
+    col("D_ontem") - col("L")
+)
+
+# Adicionar a coluna "data" com o valor de hoje para os novos dados
+df_hoje_transformado = df_hoje_transformado.withColumn("data", lit(data_hoje))
+
+# Escrever as novas linhas no Delta Lake com append
+df_hoje_transformado.write.format("delta").mode("append").save(delta_table_path)
+
+# Encerrar a sessão Spark
+spark.stop()
 
 df_final = df_hoje.select("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K_hoje", "L_hoje", "M_hoje", "N_hoje")  # Selecionar colunas finais
 
