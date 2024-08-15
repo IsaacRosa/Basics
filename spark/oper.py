@@ -53,43 +53,67 @@ delta_table_path = "s3://your-bucket/your-delta-table/"
 df = spark.read.format("delta").load(delta_table_path)
 
 # Filtrar os dados de ontem
-df_ontem = df.filter(col("data") == data_ontem).alias("ontem")
+df_ontem = df.filter(col("data") == data_ontem)
 
-# Filtrar os dados de hoje (inicialmente vazio, será preenchido com as novas linhas)
-df_hoje = df_ontem.select(
-    col("nome").alias("nome"),
-    col("data").alias("data"),
-    col("k").alias("k_ontem"),
+# Criar um DataFrame com as colunas padrão e suas versões com sufixo "_ontem"
+df_combined = df_ontem.select(
+    col("A"),
+    col("B"),
+    col("C"),
+    col("D"),
+    col("E"),
+    col("F"),
+    col("G"),
+    col("H"),
+    col("I"),
+    col("J"),
+    col("K"),
+    col("L"),
+    col("M"),
+    col("N"),
+    col("A").alias("A_ontem"),
+    col("B").alias("B_ontem"),
+    col("C").alias("C_ontem"),
+    col("D").alias("D_ontem"),
+    col("E").alias("E_ontem"),
+    col("F").alias("F_ontem"),
+    col("G").alias("G_ontem"),
+    col("H").alias("H_ontem"),
     col("I").alias("I_ontem"),
     col("J").alias("J_ontem"),
+    col("K").alias("K_ontem"),
     col("L").alias("L_ontem"),
-    col("D").alias("D_ontem"),
-    col("H").alias("H_ontem")
+    col("M").alias("M_ontem"),
+    col("N").alias("N_ontem")
 )
 
-# Transformações para calcular os valores de hoje baseados nos dados de ontem
-df_hoje_transformado = df_hoje.withColumn(
+# Realizar as transformações para os dados de hoje usando as colunas sem sufixo
+df_transformado = df_combined.withColumn(
     "K",
-    col("k_ontem") + when(col("J_ontem").isNull(), datediff(lit(data_hoje), col("I_ontem"))).otherwise(datediff(lit(data_hoje), col("data_J_ontem")))
+    col("K_ontem") + when(col("J_ontem").isNull(), datediff(lit(data_hoje), col("I_ontem"))).otherwise(datediff(lit(data_hoje), col("J_ontem")))
 ).withColumn(
     "N",
-    (col("K") - col("k_ontem")) * col("H_ontem")
+    (col("K") - col("K_ontem")) * col("H_ontem")
 ).withColumn(
     "L",
     col("L_ontem") + col("N")
 ).withColumn(
     "M",
     col("D_ontem") - col("L")
+).withColumn(
+    "data", lit(data_hoje)
 )
 
-# Adicionar a coluna "data" com o valor de hoje para os novos dados
-df_hoje_transformado = df_hoje_transformado.withColumn("data", lit(data_hoje))
+# Remover as colunas de ontem
+df_final = df_transformado.drop(
+    "A_ontem", "B_ontem", "C_ontem", "D_ontem", "E_ontem", "F_ontem", 
+    "G_ontem", "H_ontem", "I_ontem", "J_ontem", "K_ontem", "L_ontem", "M_ontem", "N_ontem"
+)
 
-# Escrever as novas linhas no Delta Lake com append
-df_hoje_transformado.write.format("delta").mode("append").save(delta_table_path)
+# Escrever os dados transformados no Delta Lake com append
+df_final.write.format("delta").mode("append").save(delta_table_path)
 
 # Encerrar a sessão Spark
 spark.stop()
 
-df_final = df_hoje.select("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K_hoje", "L_hoje", "M_hoje", "N_hoje")  # Selecionar colunas finais
 
